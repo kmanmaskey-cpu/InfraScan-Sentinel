@@ -20,6 +20,7 @@ input_batch = transform(RGB).to(device)
 
 with torch.no_grad():
     prediction = midas(input_batch)
+    b = prediction
     prediction=prediction.squeeze()
 
 
@@ -43,3 +44,6 @@ edge_pixels_original = edge_pixels_depth * x_scale
 
 print("Depth edges in depth coordinates:", edge_pixels_depth)
 print("Depth edges in original coordinates:", edge_pixels_original)
+print("Before squeeze:", b.shape)
+
+print("After squeeze:", prediction.shape)

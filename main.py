@@ -1,10 +1,54 @@
 import cv2
 import numpy as np
+import torch
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
+midas.eval()
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+midas.to(device)
+
+transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
+transform = transforms.small_transform
+
 
 # 1. Load your building photo
 image = cv2.imread('C:\\ML PROJECTS\\InfraScan-Sentinel\\OIP.jpg')
 # 2. Convert to Grayscale
+RGB = cv2.cvtColor(image,cv2.COLOR_BGRA2RGB)
 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+input_batch = transform(RGB).to(device)
+
+with torch.no_grad():
+    prediction = midas(input_batch)
+    b = prediction
+    prediction=prediction.squeeze()
+
+
+depth_map = prediction.cpu().numpy()
+print(depth_map.shape[0])
+h = depth_map.shape[0]
+middle_row = depth_map[h//2]
+
+
+x_scale = image.shape[0]/depth_map.shape[0]
+y_scale = image.shape[1]/depth_map.shape[1]
+
+depth_gradient = np.abs(np.gradient(middle_row))
+
+threshold = np.percentile(depth_gradient, 90)  # top 10% strongest edges
+edge_pixels_depth = np.where(depth_gradient > threshold)[0]
+
+edge_pixels_original = edge_pixels_depth * x_scale
+
+depth_left_edge = edge_pixels_original[
+    edge_pixels_original < image.shape[1]//2].max()
+depth_right_edge = edge_pixels_original[
+    edge_pixels_original > image.shape[1]//2].min()
+
 
 # 3. Use Canny Edge Detection
 # This finds the "lines" between the buildings
@@ -91,6 +135,7 @@ if right:
     inner_right_edge = min(refined_right)
 
 # Find the average pixel distance between siding boards
+r_squared =0.3
 if len(horizontal_y_positions) >= 2:
     horizontal_y_positions.sort()
     # Calculate differences between consecutive lines
@@ -149,9 +194,19 @@ if len(horizontal_y_positions) >= 2:
 
 # Check if we successfully found BOTH edges using our refined logic
 if 'inner_left_edge' in locals() and 'inner_right_edge' in locals():
+    w_hough = r_squared
+    w_depth = 1 - r_squared
+    
+    fused_left = (inner_left_edge * w_hough) + (depth_left_edge * w_depth)
+    fused_right = (inner_right_edge * w_hough) + (depth_right_edge * w_depth)
+    
+    print(f"Hough weight: {w_hough:.2f}, Depth weight: {w_depth:.2f}")
+    print(f"Fused left edge: {fused_left:.1f}")
+    print(f"Fused right edge: {fused_right:.1f}")
+if 'inner_left_edge' in locals() and 'inner_right_edge' in locals():
     
     # 1. THE MATH: Use the variables created by your histogram blocks
-    pixel_gap = inner_right_edge - inner_left_edge
+    pixel_gap = fused_right - fused_left
     real_world_gap = pixel_gap*cm_per_pixel
     if real_world_gap <4:  # If the gap is less than 10 cm, we consider it a "collision risk"
         status = "WARNING: Collision Risk Detected!"
@@ -187,3 +242,4 @@ if cv2.waitKey(0) & 0xFF == ord('q'):
     pass
 
 cv2.destroyAllWindows()
+
