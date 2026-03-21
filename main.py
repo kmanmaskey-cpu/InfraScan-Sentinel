@@ -1,9 +1,21 @@
+
+# ============================================
+# InfraScan Sentinel - Current State
+# What it does: Fuses Hough + MiDaS edges
+# Key outputs: fused_left, fused_right, real_world_gap, r_squared
+# Known issues: 
+#   - Visualization still uses Hough edges not fused
+#   - Scale calibration unreliable without ground truth
+#   - Only tested on OIP.jpg
+# Next task: Fix visualization to use fused edges
+# ============================================
 import cv2
 import numpy as np
 import torch
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from exif_test import get_focal_length_pixels
 
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
 midas.eval()
@@ -15,7 +27,7 @@ transform = transforms.small_transform
 
 
 # 1. Load your building photo
-image = cv2.imread('C:\\ML PROJECTS\\InfraScan-Sentinel\\OIP.jpg')
+image = cv2.imread('C:\ML PROJECTS\InfraScan-Sentinel\IMG_4687.JPG')
 # 2. Convert to Grayscale
 RGB = cv2.cvtColor(image,cv2.COLOR_BGRA2RGB)
 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -85,7 +97,7 @@ if lines is not None:
         # 2. The Vertical Filter 
         # We only want lines between 70 and 110 degrees
         if 75 < angle < 105:
-            cv2.line(image, (x1, y1), (x2, y2), (0, 255, 0), 3)
+            
             if x1<mid:
                 left.append(x1)
             else:
@@ -93,7 +105,7 @@ if lines is not None:
         # 2. Capture Horizontal lines (The Scale Vectors)
         # We look for lines near 0 or 180 degrees
         elif angle < 10 or angle > 170:
-            cv2.line(image, (x1, y1), (x2, y2), (255, 0, 0), 2) # Blue lines
+          
             horizontal_y_positions.append(y1)
 
 
@@ -138,6 +150,11 @@ if right:
 r_squared =0.3
 if len(horizontal_y_positions) >= 2:
     horizontal_y_positions.sort()
+    deduped = [horizontal_y_positions[0]]
+    for y in horizontal_y_positions[1:]:
+        if y - deduped[-1] > 3:
+            deduped.append(y)
+    horizontal_y_positions = deduped
     # Calculate differences between consecutive lines
     gaps = np.diff(horizontal_y_positions)
 
@@ -148,13 +165,13 @@ if len(horizontal_y_positions) >= 2:
 
     # Filter out tiny gaps (noise) and huge gaps (missed boards)
     # Most siding boards in pixels will be roughly consistent
-    valid_gaps = [g for g in gaps if 5 < g < 50]
+    valid_gaps = [g for g in gaps if 2 < g < 50]
     for i in range(len(valid_gaps)):
         y_pos = horizontal_y_positions[i]
-        if 5 < gaps[i] < 50:
+        if 2 < gaps[i] < 50:
             gap_data.append((y_pos, gaps[i]))
 
-    if len(gap_data) > 3:  # We need at least a few points to find a 'trend'
+    if len(gap_data) > 2:  # We need at least a few points to find a 'trend'
         # 1. Convert our list of tuples into two separate math arrays
         y_coords = np.array([pt[0] for pt in gap_data])
         pixel_gaps = np.array([pt[1] for pt in gap_data])
@@ -169,7 +186,8 @@ if len(horizontal_y_positions) >= 2:
 
         total_residual = np.sum((pixel_gaps-optimal_pixel_gap)**2)
         variance = np.sum((pixel_gaps - np.mean(pixel_gaps))**2)
-        r_squared = 1 - (total_residual / (variance + 1e-7))  # Add small value to prevent division by zero
+        r_squared = 1 - (total_residual / (variance + 1e-7))# Add small value to prevent division by zero
+        r_squared = max(0.0, r_squared)  
         print(f"R² of the fit: {r_squared:.4f}")
         
         # 4. Use this refined pixel size for the final math
@@ -207,7 +225,13 @@ if 'inner_left_edge' in locals() and 'inner_right_edge' in locals():
     
     # 1. THE MATH: Use the variables created by your histogram blocks
     pixel_gap = fused_right - fused_left
-    real_world_gap = pixel_gap*cm_per_pixel
+    
+    assumed_distance_cm = 1000
+    try:
+        focal_length_px = get_focal_length_pixels('C:\ML PROJECTS\InfraScan-Sentinel\IMG_4687.JPG')
+    except:
+        focal_length_px = 2500  # reasonable smartphone default
+    real_world_gap = (pixel_gap * assumed_distance_cm) / focal_length_px
     if real_world_gap <4:  # If the gap is less than 10 cm, we consider it a "collision risk"
         status = "WARNING: Collision Risk Detected!"
         color = (0, 0, 255)  # Red
@@ -222,24 +246,34 @@ if 'inner_left_edge' in locals() and 'inner_right_edge' in locals():
     
     # 1. Draw the dynamic bridge (Red if dangerous, Green if safe)
     print(f"Hough left edge: {inner_left_edge}")
-    print(f"Hough right edge: {inner_right_edge}")
-    cv2.line(image, (int(inner_left_edge), y_mid), (int(inner_right_edge), y_mid), color, 5)
+    cv2.line(image, (int(fused_left), y_mid), (int(fused_right), y_mid), color, 5)
     
     # 2. Show the primary measurement (CM) at the top
-    cv2.putText(image, f"GAP: {real_world_gap:.1f}cm", (int(inner_left_edge), y_mid - 40), 
+    cv2.putText(image, f"GAP: {real_world_gap:.1f}cm", (int(fused_left), y_mid - 40), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)  
 
     # 3. Show the Status Verdict slightly below it
-    cv2.putText(image, status, (int(inner_left_edge), y_mid - 15), 
+    cv2.putText(image, status, (int(fused_left), y_mid - 15), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    confidence = int(r_squared * 100)
+    cv2.putText(image, f"CONFIDENCE: {confidence}% (R^2={r_squared:.2f})", 
+            (int(fused_left), y_mid - 65),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
     print(f"REFINED Detected Gap: {pixel_gap:.2f} pixels")
     print(f"REFINED Estimated Real-World Gap: {real_world_gap:.2f} cm")
     cv2.imshow('InfraScan Sentinel - Seismic Audit', image)
+    print(f"Gap data points found: {len(gap_data)}")
+    print(f"Horizontal lines found: {len(horizontal_y_positions)}")
+    print(f"Valid gaps found: {len(valid_gaps)}")
+    print(f"Gap range: min={min(gaps):.1f}, max={max(gaps):.1f}, mean={np.mean(gaps):.1f}")
 
 
 if cv2.waitKey(0) & 0xFF == ord('q'): 
     pass
 
 cv2.destroyAllWindows()
+
+
 
