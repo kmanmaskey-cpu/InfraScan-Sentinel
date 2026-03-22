@@ -25,5 +25,5 @@ def get_focal_length_pixels(image_path):
     focal_length_px = (focal_length * image_width) / sensor_width
     
     return focal_length_px
-
-print(get_focal_length_pixels('C:\ML PROJECTS\InfraScan-Sentinel\IMG_4568.JPG'))
+if __name__ == '__main__':
+    print(get_focal_length_pixels('test_image.jpg'))
