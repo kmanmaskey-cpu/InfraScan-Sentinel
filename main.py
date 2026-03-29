@@ -9,10 +9,13 @@
 #   - Siding deduplication ✓
 #   - EXIF focal length extraction ✓
 #   - Physics-based scale formula ✓
+#   - Batch processing on multiple images ✓
+#   - Tested on 20-30 real Nepali images ✓
 # Known issues:
-#   - Assumed distance fixed at 1000cm (needs ground truth)
-#   - Only tested on 2 images
-# Next task: Test on iPad photo, collect ground truth data
+#   - Assumed distance fixed at 500cm (needs ground truth)
+#   - Confidence always 0% on smooth cement buildings
+# Next task: Collect ground truth data at Swayambhu
+#            with tape measure + proper building gap photos
 # ============================================
 import cv2
 import numpy as np
@@ -38,6 +41,9 @@ def process_image(image_path):
 
     # 1. Load your building photo
     image = cv2.imread(image_path)
+    if image is None:
+        print(f"Could not load: {image_path}")
+        return
     # 2. Convert to Grayscale
     RGB = cv2.cvtColor(image,cv2.COLOR_BGRA2RGB)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
