@@ -13,7 +13,6 @@
 #   - Tested on 20-30 real Nepali images ✓
 # Known issues:
 #   - Assumed distance fixed at 500cm (needs ground truth)
-#   - Confidence always 0% on smooth cement buildings
 # Next task: Collect ground truth data at Swayambhu
 #            with tape measure + proper building gap photos
 # ============================================
@@ -25,6 +24,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from exif import get_focal_length_pixels
 import glob
+import pandas as pd
+
 
 image_paths = glob.glob('C:\\ML PROJECTS\\InfraScan-Sentinel\\dataset\\*.jpg')
 
@@ -37,7 +38,22 @@ transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
 transform = transforms.small_transform
 
 
+def min_gap(h1,h2):
+    seismic_gap=((0.025*h1)+(0.025*h2))*100
+    return seismic_gap
+
+
 def process_image(image_path):
+    inner_left_edge =None
+    inner_right_edge = None
+    gap_data = []
+    valid_gaps = []
+    gaps = []
+    horizontal_y_positions = []
+    h1=12    #HARDCODED#
+    h2=9   
+
+
 
     # 1. Load your building photo
     image = cv2.imread(image_path)
@@ -52,7 +68,6 @@ def process_image(image_path):
 
     with torch.no_grad():
         prediction = midas(input_batch)
-        b = prediction
         prediction=prediction.squeeze()
 
 
@@ -76,6 +91,10 @@ def process_image(image_path):
         edge_pixels_original < image.shape[1]//2]
     depth_right_edge = edge_pixels_original[
         edge_pixels_original > image.shape[1]//2]
+    
+  
+    
+        
 
     if len(depth_left_edge) == 0 or len(depth_right_edge) == 0:
         print(f"Skipping {image_path} - depth edges not found on both sides")
@@ -83,6 +102,12 @@ def process_image(image_path):
     else:
         depth_left_edge=depth_left_edge.max()
         depth_right_edge=depth_right_edge.min()
+        left_idx = int(depth_left_edge / x_scale)
+        right_idx = int(depth_right_edge / x_scale)
+        gap_sharpness = np.mean(depth_gradient[left_idx:right_idx])
+        scale_factor = 2 #hardcoded
+        gap_sharpness_normalized = 1 / (1 + np.exp(-gap_sharpness/ scale_factor))
+        print('The average sharpness of the image is ',gap_sharpness_normalized)
 
 
 
@@ -99,11 +124,9 @@ def process_image(image_path):
         maxLineGap=60 # Max gap between points to link them
     )
 
-
-
     left = []
     right = []
-    horizontal_y_positions = []
+    
     mid = image.shape[1]//2
 
     cm_per_pixel = 1.0  # Default: 1 pixel = 1 cm
@@ -178,7 +201,6 @@ def process_image(image_path):
             inner_right_edge = min(refined_right)
 
     # Find the average pixel distance between siding boards
-    r_squared =0.3
     if len(horizontal_y_positions) >= 2:
         horizontal_y_positions.sort()
         deduped = [horizontal_y_positions[0]]
@@ -188,12 +210,8 @@ def process_image(image_path):
         horizontal_y_positions = deduped
         # Calculate differences between consecutive lines
         gaps = np.diff(horizontal_y_positions)
-
-        gap_data=[]
-
-
-
-
+        print(f"Gap range: min={min(gaps):.1f}, max={max(gaps):.1f}, mean={np.mean(gaps):.1f}")
+        
         # Filter out tiny gaps (noise) and huge gaps (missed boards)
         # Most siding boards in pixels will be roughly consistent
         valid_gaps = [g for g in gaps if 2 < g < 50]
@@ -223,7 +241,8 @@ def process_image(image_path):
             
             # 4. Use this refined pixel size for the final math
             known_siding_cm = 10.16
-            cm_per_pixel = known_siding_cm / (optimal_pixel_gap + 1e-7)
+            cm_per_pixel = known_siding_cm / (optimal_pixel_gap + 1e-7)  #to be used in calibration ayer
+
 
         
 
@@ -241,18 +260,21 @@ def process_image(image_path):
 
 
 
-    # Check if we successfully found BOTH edges using our refined logic
-    if 'inner_left_edge' in locals() and 'inner_right_edge' in locals():
-        w_hough = r_squared
-        w_depth = 1 - r_squared
+  
+    if inner_left_edge is not None and inner_right_edge is not None:
+        # Check if we successfully found BOTH edges using our refined logic
+        """h1 = int(input('enter the height of building 1'))
+        h2 = int(input('enter the height of building 2'))"""
+    
+        w_hough = 1- gap_sharpness_normalized
         
-        fused_left = (inner_left_edge * w_hough) + (depth_left_edge * w_depth)
-        fused_right = (inner_right_edge * w_hough) + (depth_right_edge * w_depth)
+        fused_left = (inner_left_edge * w_hough) + (depth_left_edge * gap_sharpness_normalized)
+        fused_right = (inner_right_edge * w_hough) + (depth_right_edge * gap_sharpness_normalized)
         
-        print(f"Hough weight: {w_hough:.2f}, Depth weight: {w_depth:.2f}")
+        print(f"Hough weight: {w_hough:.2f}, gap_sharpness_normalizedt: {gap_sharpness_normalized:.2f}")
+        print(f"Raw gap_sharpness: {gap_sharpness:.4f}")
         print(f"Fused left edge: {fused_left:.1f}")
         print(f"Fused right edge: {fused_right:.1f}")
-    if 'inner_left_edge' in locals() and 'inner_right_edge' in locals():
         
         # 1. THE MATH: Use the variables created by your histogram blocks
         pixel_gap = fused_right - fused_left
@@ -263,7 +285,7 @@ def process_image(image_path):
         except:
             focal_length_px = 2500  # reasonable smartphone default
         real_world_gap = (pixel_gap * assumed_distance_cm) / focal_length_px
-        if real_world_gap <4:  # If the gap is less than 10 cm, we consider it a "collision risk"
+        if real_world_gap <min_gap(h1,h2):  # If the gap is less than 10 cm, we consider it a "collision risk"
             status = "WARNING: Collision Risk Detected!"
             color = (0, 0, 255)  # Red
         else:
@@ -287,8 +309,8 @@ def process_image(image_path):
         cv2.putText(image, status, (int(fused_left), y_mid - 15), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        confidence = int(r_squared * 100)
-        cv2.putText(image, f"CONFIDENCE: {confidence}% (R^2={r_squared:.2f})", 
+        confidence = int(gap_sharpness_normalized * 100)
+        cv2.putText(image, f"CONFIDENCE: {confidence}% (sharpness={gap_sharpness_normalized:.2f})", 
                 (int(fused_left), y_mid - 65),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
@@ -298,8 +320,7 @@ def process_image(image_path):
         print(f"Gap data points found: {len(gap_data)}")
         print(f"Horizontal lines found: {len(horizontal_y_positions)}")
         print(f"Valid gaps found: {len(valid_gaps)}")
-        print(f"Gap range: min={min(gaps):.1f}, max={max(gaps):.1f}, mean={np.mean(gaps):.1f}")
-
+            
 
     output_path = image_path.replace('.jpg', '_result.jpg')
     cv2.imwrite(output_path, image)
