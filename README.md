@@ -61,12 +61,6 @@ This is used as a validation step instead of relying only on edge detection.
 
 ---
 
-## Repository
-
-GitHub: 
-
----
-
 ## Note
 
 This is an ongoing project under active development.
