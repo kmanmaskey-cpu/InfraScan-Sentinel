@@ -3,37 +3,71 @@
 
 
 <img width="674" height="721" alt="image" src="https://github.com/user-attachments/assets/1f5d56b6-4f79-4d04-a7c7-5b405d0f1ecb" />
-## Problem
-Detect seismic gaps between adjacent buildings using a single image.
+# InfraScan Sentinel
+
+## Overview
+
+InfraScan Sentinel is a computer vision project aimed at detecting seismic gaps between adjacent buildings using a single image.
+
+The goal is to estimate whether the gap between buildings is safe or poses a collision risk during earthquakes.
+
+---
 
 ## Approach
-- Use MiDaS to estimate depth
-- Detect candidate edges using depth gradient
-- Refine edges using Hough transform
-- Validate gap by comparing depth inside vs outside region
 
-## Current Issue
-There is a coordinate mismatch between depth space and image space, causing incorrect boundary localization.
+The current system combines:
 
-## Status
-Prototype working, validation stage incomplete.
+* **MiDaS depth estimation** → to understand relative distance
+* **Depth gradient** → to detect candidate gap boundaries
+* **Hough Transform** → to refine structural edges
+* **Fusion logic** → combines depth and geometric edges
 
+---
 
+## Key Idea
 
-### **Subtitle: Non-Contact Seismic Gap Analysis for High-Density Urban Environments**
+A valid seismic gap should satisfy:
 
-## **Overview**
-In high-density cities like **Kathmandu**, buildings are often constructed with insufficient separation. During a seismic event, these adjacent structures can collide—a phenomenon known as **Seismic Pounding**.
+> The region between two building edges should have higher depth (farther away) than the buildings themselves.
 
-This project utilizes **Computer Vision (OpenCV)** and **Structural Dynamics Theory** to identify at-risk building clusters by measuring real-world gaps through non-invasive video analysis.
+This is used as a validation step instead of relying only on edge detection.
 
-## **The Problem**
-According to **Nepal National Building Code (NBC) 105:2020**, structural separation is mandatory to prevent collision. However, thousands of existing structures in the Kathmandu Valley lack the required **"Seismic Gap."** Traditional measurement methods are slow and labor-intensive.
+---
 
-## **Technical Implementation**
-* **Feature Extraction:** Utilizing Canny Edge Detection and **Hough Line Transforms** to isolate vertical structural boundaries.
-* **Metrology:** Mapping pixel-width to real-world centimeters using camera intrinsic calibration.
-* **Risk Assessment:** Categorizing gaps based on height-to-separation ratios defined by seismic safety standards.
+## Current Status
 
-## **Local-to-Global Impact**
-While developed in the high-seismic context of Nepal, the **InfraScan-Sentinel** logic is applicable to aging infrastructure in NYC, Tokyo, and Mexico City, where "pounding" remains a hidden threat to urban resilience.
+* Prototype pipeline implemented
+* Tested on real images
+* Edge detection partially working
+* Depth-based validation implemented (under testing)
+
+---
+
+## Current Issues
+
+* Coordinate mismatch between depth map and image space
+* Inconsistent gap boundary detection
+* Hardcoded parameters (distance, building height)
+* No ground truth calibration yet
+
+---
+
+## Next Steps
+
+* Fix coordinate system (depth vs image space)
+* Validate depth-based gap condition
+* Collect real-world measurements for calibration
+* Improve robustness across different scenes
+
+---
+
+## Repository
+
+GitHub: 
+
+---
+
+## Note
+
+This is an ongoing project under active development.
+
