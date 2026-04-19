@@ -25,9 +25,22 @@ import matplotlib.pyplot as plt
 from exif import get_focal_length_pixels
 import glob
 import pandas as pd
+from PIL import Image
+from pillow_heif import register_heif_opener
+import os
+import math
+
+register_heif_opener()
+dataset = r'C:\ML PROJECTS\InfraScan-Sentinel\dataset'
+for filename in os.listdir(dataset):
+    if filename.upper().endswith('.HEIC'):
+        img = Image.open(os.path.join(dataset,filename))
+        new_file = os.path.splitext(filename)[0]+'.JPG'
+        img.convert('RGB').save(os.path.join(dataset,new_file),'JPEG')
 
 
-image_paths = glob.glob('C:\\ML PROJECTS\\InfraScan-Sentinel\\dataset\\*.jpg')
+image_paths = glob.glob('C:\\ML PROJECTS\\InfraScan-Sentinel\\dataset\\*.JPG')
+path1 =glob.glob('C:\\ML PROJECTS\\InfraScan-Sentinel\\dataset\\*IMG_5039.JPG')
 
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
 midas.eval()
@@ -57,6 +70,13 @@ def process_image(image_path):
 
     # 1. Load your building photo
     image = cv2.imread(image_path)
+    width = math.ceil(image.shape[1]*0.5)
+    height=math.ceil(image.shape[0]*0.5)
+    dimensions = (width,height)
+    image = cv2.resize(image,dimensions,interpolation=cv2.INTER_AREA)
+
+
+    image 
     if image is None:
         print(f"Could not load: {image_path}")
         return
@@ -91,7 +111,24 @@ def process_image(image_path):
         edge_pixels_original < image.shape[1]//2]
     depth_right_edge = edge_pixels_original[
         edge_pixels_original > image.shape[1]//2]
+
+
+    w=20 
+    X1 = int(depth_left_edge.max())
+    X1 = max(w, int(X1))
+
+    X2 = int(depth_right_edge.min())
+    X2 = min(depth_map.shape[1]-w, int(X2))
+    print("X1:", X1, "X2:", X2)
+    print("shape:", depth_map.shape)
+    if X1 >= X2:
+        print('failed')
     
+    
+    depth_left  = np.mean(depth_map[:, X1-w : X1])
+    depth_gap   = np.mean(depth_map[:, X1 : X2])
+    depth_right = np.mean(depth_map[:, X2 : X2+w])
+    print(depth_left, depth_gap, depth_right)
   
     
         
@@ -113,15 +150,15 @@ def process_image(image_path):
 
     # 3. Use Canny Edge Detection
     # This finds the "lines" between the buildings
-    edges = cv2.Canny(gray, 50, 150)
+    edges = cv2.Canny(gray, 30, 100)
 
     lines = cv2.HoughLinesP(
         edges, 
         rho=1,            # Distance resolution in pixels (usually 1)
         theta=np.pi/180,  # Angle resolution in radians (1 degree)
-        threshold=50,  # Minimum 'votes' to be considered a line
-        minLineLength=60,# Minimum length of line in pixels
-        maxLineGap=60 # Max gap between points to link them
+        threshold=75,  # Minimum 'votes' to be considered a line
+        minLineLength=30,# Minimum length of line in pixels
+        maxLineGap=100 # Max gap between points to link them
     )
 
     left = []
@@ -130,75 +167,60 @@ def process_image(image_path):
     mid = image.shape[1]//2
 
     cm_per_pixel = 1.0  # Default: 1 pixel = 1 cm
+    print("LINES:", len(lines) if lines is not None else 0)
+   
+
 
 
     # 3. Draw the lines back onto the original image
     if lines is not None:
+        length_coordinates_List = []
+        left=[]
+        right=[]
         for line in lines:
+            
             x1, y1, x2, y2 = line[0]
+
             
             # 1. Calculate the angle of the line
             # arctan2 returns radians, we convert to degrees
-            angle = np.abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+            angle = (np.abs(np.degrees(np.arctan2(y2 - y1, x2 - x1))))
+
+
+            #print("ANGLE:", angle)
             
             # 2. The Vertical Filter 
             # We only want lines between 70 and 110 degrees
-            if 75 < angle < 105:
-                
-                if x1<mid:
-                    left.append(x1)
-                else:
-                    right.append(x1)
-            # 2. Capture Horizontal lines (The Scale Vectors)
-            # We look for lines near 0 or 180 degrees
-            elif angle < 10 or angle > 170:
+            if 60 < angle < 125:
+                #Use distance formula
+                length_of_lines = math.sqrt((x2-x1)**2+(y2-y1)**2)
+                length_coordinates = {'x1':x1,'y1':y1,'x2':x2,'y2':y2,'length_of_lines':length_of_lines}
+                length_coordinates_List.append(length_coordinates)
+
+        
+        sorted_length = sorted(length_coordinates_List, key=lambda x: x["length_of_lines"],reverse = True)
+        for items in sorted_length[0:math.ceil(len(sorted_length)*0.2)]:
+            midpoint = (items['x1']+items['x2'])/2
+            if midpoint<mid:
+                left.append(items)
+            elif midpoint>mid:
+                right.append(items)
+        if not left or not right:
+            print("Hough failed: one side empty")
+            return
+        x_left = max(left, key=lambda x: (x['x1'] + x['x2']) / 2)
+        x_right = min(right, key=lambda x: (x['x1'] + x['x2']) / 2)
+        gap = ( (x_right['x1'] + x_right['x2'])/2 ) - ( (x_left['x1'] + x_left['x2'])/2 )
             
-                horizontal_y_positions.append(y1)
 
 
 
 
 
-    if left:
-        
-        ignore_zone = image.shape[1]*0.1  # Ignore the leftmost 20% of the image to avoid false positives from the edge
-        left = [x for x in left if x>ignore_zone]  # Filter out lines in the ignore zone
-        
-        counts, bin_edges = np.histogram(left, bins=10)
-        best_bin_index = np.argmax(counts)
 
         
-        # Define the boundaries of our "Busiest Block"
-        lower_bound = bin_edges[best_bin_index]
-        upper_bound = bin_edges[best_bin_index + 1]
 
-        # Filter the left edges to only include those within the busiest block
-        
-        refined_left = [x for x in left if lower_bound <= x <= upper_bound]
-        if not refined_left:
-            pass
-        else:
-
-            # Now find the final edge
-            inner_left_edge = max(refined_left)
-
-    if right:
-        counts, bin_edges = np.histogram(right, bins=10)
-        best_bin_index = np.argmax(counts)
-        
-        # Define the boundaries of our "Busiest Block"
-        lower_bound = bin_edges[best_bin_index]
-        upper_bound = bin_edges[best_bin_index + 1]
-
-        # Filter the right edges to only include those within the busiest block
-        
-        refined_right = [x for x in right if lower_bound <= x <= upper_bound]
-        if not refined_right:
-            pass
-        else:
-
-            # Now find the final edge
-            inner_right_edge = min(refined_right)
+   
 
     # Find the average pixel distance between siding boards
     if len(horizontal_y_positions) >= 2:
@@ -257,6 +279,10 @@ def process_image(image_path):
             # The Magic Formula: Scale = Real World / Pixels
             cm_per_pixel = known_siding_cm / (avg_pixel_gap + 1e-7)  # Add small value to prevent division by zero
             print(f"AUTOMATED SCALE: {cm_per_pixel:.4f} cm/pixel")
+    
+    inner_left_edge = (x_left['x1'] + x_left['x2']) / 2
+    inner_right_edge = (x_right['x1'] + x_right['x2']) / 2
+    
 
 
 
@@ -317,6 +343,10 @@ def process_image(image_path):
         print(f"REFINED Detected Gap: {pixel_gap:.2f} pixels")
         print(f"REFINED Estimated Real-World Gap: {real_world_gap:.2f} cm")
         cv2.imshow('InfraScan Sentinel - Seismic Audit', image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    
+
         print(f"Gap data points found: {len(gap_data)}")
         print(f"Horizontal lines found: {len(horizontal_y_positions)}")
         print(f"Valid gaps found: {len(valid_gaps)}")
@@ -325,9 +355,14 @@ def process_image(image_path):
     output_path = image_path.replace('.jpg', '_result.jpg')
     cv2.imwrite(output_path, image)
     print(f"Saved result to: {output_path}")
+    
 
-for path in image_paths:
-    process_image(path)
+    
+
+"""for path in image_paths:
+    process_image(path)"""
+process_image(path1[0])
+
 
 
 
