@@ -1,5 +1,13 @@
 # InfraScan Sentinel 🏢🏛️
 
+System works partially
+Main issue: inconsistent edge localization due to coordinate scaling bug
+Next step: fix depth-space indexing and validate depth-based scoring
+
+<img width="674" height="721" alt="image" src="https://github.com/user-attachments/assets/1f5d56b6-4f79-4d04-a7c7-5b405d0f1ecb" />
+
+
+
 ### **Subtitle: Non-Contact Seismic Gap Analysis for High-Density Urban Environments**
 
 ## **Overview**
