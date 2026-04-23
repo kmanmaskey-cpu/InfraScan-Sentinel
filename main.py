@@ -40,7 +40,7 @@ for filename in os.listdir(dataset):
 
 
 image_paths = glob.glob('C:\\ML PROJECTS\\InfraScan-Sentinel\\dataset\\*.JPG')
-path1 =glob.glob('C:\\ML PROJECTS\\InfraScan-Sentinel\\dataset\\*IMG_5039.JPG')
+path1 =glob.glob('C:\\ML PROJECTS\\InfraScan-Sentinel\\dataset\\*IMG_5047.JPG')
 
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
 midas.eval()
@@ -97,8 +97,8 @@ def process_image(image_path):
     middle_row = depth_map[h//2]
 
 
-    x_scale = image.shape[0]/depth_map.shape[0]
-    y_scale = image.shape[1]/depth_map.shape[1]
+    x_scale = image.shape[1]/depth_map.shape[1]
+    y_scale = image.shape[0]/depth_map.shape[0]
 
     depth_gradient = np.abs(np.gradient(middle_row))
 
@@ -156,7 +156,7 @@ def process_image(image_path):
         edges, 
         rho=1,            # Distance resolution in pixels (usually 1)
         theta=np.pi/180,  # Angle resolution in radians (1 degree)
-        threshold=75,  # Minimum 'votes' to be considered a line
+        threshold=45,  # Minimum 'votes' to be considered a line
         minLineLength=30,# Minimum length of line in pixels
         maxLineGap=100 # Max gap between points to link them
     )
@@ -174,6 +174,8 @@ def process_image(image_path):
 
     # 3. Draw the lines back onto the original image
     if lines is not None:
+
+              
         length_coordinates_List = []
         left=[]
         right=[]
@@ -191,15 +193,19 @@ def process_image(image_path):
             
             # 2. The Vertical Filter 
             # We only want lines between 70 and 110 degrees
-            if 60 < angle < 125:
+            if 75 < angle < 120:
                 #Use distance formula
                 length_of_lines = math.sqrt((x2-x1)**2+(y2-y1)**2)
                 length_coordinates = {'x1':x1,'y1':y1,'x2':x2,'y2':y2,'length_of_lines':length_of_lines}
                 length_coordinates_List.append(length_coordinates)
+            print(angle)
 
         
-        sorted_length = sorted(length_coordinates_List, key=lambda x: x["length_of_lines"],reverse = True)
-        for items in sorted_length[0:math.ceil(len(sorted_length)*0.2)]:
+      
+        best_gaps=10**34
+        x_valid_left = 0
+        x_valid_right = 0
+        for items in length_coordinates_List:
             midpoint = (items['x1']+items['x2'])/2
             if midpoint<mid:
                 left.append(items)
@@ -208,18 +214,38 @@ def process_image(image_path):
         if not left or not right:
             print("Hough failed: one side empty")
             return
-        x_left = max(left, key=lambda x: (x['x1'] + x['x2']) / 2)
-        x_right = min(right, key=lambda x: (x['x1'] + x['x2']) / 2)
-        gap = ( (x_right['x1'] + x_right['x2'])/2 ) - ( (x_left['x1'] + x_left['x2'])/2 )
-            
+        for l in left:   #finding the midpoint 
+            x_l  = (l['x1'] + l['x2']) / 2
+            xl = int(x_l)
+            x_left_depth = int(xl/x_scale)
+            for r in right:
+                x_r = int((r['x1'] + r['x2']) / 2)
+                xr =int(x_r)
+                x_right_depth = int(xr/x_scale)
+                if x_left_depth >= x_right_depth:
+                    continue
+                else:
+                    w=20
+                    if x_left_depth - w < 0 or x_right_depth + w > depth_map.shape[1]:
+                        continue
+                    else:
+                    
+                        depth_left_2  = np.mean(depth_map[:, x_left_depth-w : x_left_depth])
+                        depth_gap_2   = np.mean(depth_map[:, x_left_depth : x_right_depth])
+                        depth_right_2 = np.mean(depth_map[:, x_right_depth: x_right_depth+w])
+                    if depth_gap_2 > depth_left_2 and depth_gap_2 > depth_right_2:
+                        gap = abs(xl-xr)
+                        if gap<best_gaps:
+                            best_gaps=gap
+                            x_valid_left = xl
+                            x_valid_right = xr
 
-
-
-
-
-
-        
-
+                    else:
+                        continue
+    print(x_valid_left)
+    print(x_valid_right)
+    print(best_gaps)
+                        
    
 
     # Find the average pixel distance between siding boards
@@ -280,8 +306,8 @@ def process_image(image_path):
             cm_per_pixel = known_siding_cm / (avg_pixel_gap + 1e-7)  # Add small value to prevent division by zero
             print(f"AUTOMATED SCALE: {cm_per_pixel:.4f} cm/pixel")
     
-    inner_left_edge = (x_left['x1'] + x_left['x2']) / 2
-    inner_right_edge = (x_right['x1'] + x_right['x2']) / 2
+    inner_left_edge = x_valid_left
+    inner_right_edge = x_valid_right
     
 
 
